@@ -1,5 +1,4 @@
 # 🩺 AI Health Risk Prediction System
----
 
 ## 📖 Overview
 
@@ -24,10 +23,12 @@ It combines a trained ML model, rule-based safety logic, and the Groq LLM (Llama
 | Layer | Technology |
 |---|---|
 | Frontend UI | Streamlit |
-| Backend API | Django REST Framework |
+| Backend API | Django + Django REST Framework |
+| Database | PostgreSQL |
 | Machine Learning | Scikit-learn, Pandas, NumPy |
 | LLM Explanations | Groq API (Llama 3) |
 | Model Serialisation | Joblib |
+| DB Adapter | psycopg2 |
 | Environment Config | python-dotenv |
 
 ---
@@ -60,9 +61,11 @@ User Input (Streamlit UI)
         ▼
 Django REST API  ──  POST /predict_health/
         │
-        ▼
-predictor.py  ──►  health_model.pkl  (ML Prediction + Probability)
-        │
+        ├──────────────────────────────────────┐
+        ▼                                      ▼
+predictor.py  ──►  health_model.pkl     PostgreSQL Database
+(ML Prediction + Probability)           (Store patient record
+        │                                + prediction result)
         ▼
 Rule-based Safety Layer  (flag: high BP, high glucose, anaemia, etc.)
         │
@@ -94,7 +97,113 @@ JSON Response  ──►  Streamlit UI  (Risk Level + Score + Remarks + Flags)
 
 ---
 
-## 📁 Project Structure
+## 🗄️ Database — PostgreSQL
+
+This project uses **PostgreSQL** as the primary database to persist patient records, prediction results, and risk flags after each API call.
+
+### What Gets Stored
+
+| Table | Description |
+|---|---|
+| `api_patientrecord` | Patient demographics (name, DOB, gender, email) |
+| `api_healthinput` | Raw vitals submitted per prediction (glucose, cholesterol, BP, etc.) |
+| `api_predictionresult` | ML output (probability, risk level, haemoglobin status, flags, remarks) |
+
+### Django Model Overview (`api/models.py`)
+
+```python
+class PatientRecord(models.Model):
+    full_name     = models.CharField(max_length=255)
+    dob           = models.DateField()
+    gender        = models.CharField(max_length=10)
+    email         = models.EmailField(unique=True)
+    created_at    = models.DateTimeField(auto_now_add=True)
+
+class PredictionResult(models.Model):
+    patient       = models.ForeignKey(PatientRecord, on_delete=models.CASCADE)
+    glucose       = models.FloatField()
+    cholesterol   = models.FloatField()
+    haemoglobin   = models.FloatField()
+    sysBP         = models.FloatField()
+    currentSmoker = models.BooleanField()
+    diabetes      = models.BooleanField()
+    probability   = models.FloatField()
+    risk_level    = models.CharField(max_length=20)
+    haemoglobin_status = models.CharField(max_length=20)
+    flags         = models.JSONField()
+    remarks       = models.TextField()
+    predicted_at  = models.DateTimeField(auto_now_add=True)
+```
+
+### PostgreSQL Setup
+
+**1. Install PostgreSQL** (if not already installed):
+
+```bash
+# Ubuntu / Debian
+sudo apt update && sudo apt install postgresql postgresql-contrib
+
+# macOS (Homebrew)
+brew install postgresql
+brew services start postgresql
+
+# Windows
+# Download installer from https://www.postgresql.org/download/windows/
+```
+
+**2. Create the database and user:**
+
+```sql
+-- Run in psql shell
+psql -U postgres
+
+CREATE DATABASE health_risk_db;
+CREATE USER health_user WITH PASSWORD 'yourpassword';
+GRANT ALL PRIVILEGES ON DATABASE health_risk_db TO health_user;
+\q
+```
+
+**3. Add credentials to your `.env`:**
+
+```env
+DB_NAME=health_risk_db
+DB_USER=health_user
+DB_PASSWORD=yourpassword
+DB_HOST=localhost
+DB_PORT=5432
+```
+
+**4. Configure Django `settings.py`:**
+
+```python
+import os
+
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.environ.get('DB_NAME'),
+        'USER': os.environ.get('DB_USER'),
+        'PASSWORD': os.environ.get('DB_PASSWORD'),
+        'HOST': os.environ.get('DB_HOST', 'localhost'),
+        'PORT': os.environ.get('DB_PORT', '5432'),
+    }
+}
+```
+
+**5. Run migrations:**
+
+```bash
+python manage.py makemigrations
+python manage.py migrate
+```
+
+**6. Verify tables were created:**
+
+```bash
+psql -U health_user -d health_risk_db -c "\dt"
+```
+
+---
 
 ```
 project-root/
@@ -167,12 +276,19 @@ cp .env.example .env
 **.env.example:**
 
 ```env
-# Required
+# Groq LLM
 GROQ_API_KEY=your_groq_api_key_here
 
 # Django
 DJANGO_SECRET_KEY=your_django_secret_key_here
 DEBUG=True
+
+# PostgreSQL Database
+DB_NAME=health_risk_db
+DB_USER=health_user
+DB_PASSWORD=yourpassword
+DB_HOST=localhost
+DB_PORT=5432
 
 # Streamlit → Django connection
 BACKEND_URL=http://127.0.0.1:8000
@@ -282,6 +398,7 @@ pip install -r requirements.txt
 |---|---|
 | `django` | Backend web framework |
 | `djangorestframework` | REST API support |
+| `psycopg2-binary` | PostgreSQL adapter for Django |
 | `scikit-learn` | ML model training and prediction |
 | `pandas` | Data manipulation |
 | `numpy` | Numerical operations |
@@ -296,9 +413,10 @@ pip install -r requirements.txt
 
 - Building an end-to-end ML pipeline (data → training → serialisation → inference)
 - Integrating ML models into a Django REST API
+- Configuring PostgreSQL with Django and managing schema migrations
 - Using the Groq API for real-time LLM-powered explanations
 - Streamlit frontend development and state management
-- Real-world system design: separating concerns across ML, rules, LLM, and UI layers
+- Real-world system design: separating concerns across ML, rules, LLM, database, and UI layers
 
 ---
 
@@ -313,6 +431,5 @@ pip install -r requirements.txt
 - **Multilingual support** — LLM explanations in regional languages
 
 ---
-
 
 > **⚠️ Medical Disclaimer:** This tool is for **educational and portfolio demonstration purposes only**. It is not a substitute for professional medical advice, diagnosis, or treatment. Never disregard professional medical advice or delay seeking it because of something generated by this application.
